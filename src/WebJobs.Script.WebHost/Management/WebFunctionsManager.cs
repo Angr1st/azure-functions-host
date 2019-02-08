@@ -38,31 +38,21 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Management
             _functionsSyncManager = functionsSyncManager;
         }
 
-        /// <summary>
-        /// Calls into ScriptHost to retrieve list of FunctionMetadata
-        /// and maps them to FunctionMetadataResponse.
-        /// </summary>
-        /// <param name="request">Current HttpRequest for figuring out baseUrl</param>
-        /// <returns>collection of FunctionMetadataResponse</returns>
-        public async Task<IEnumerable<FunctionMetadataResponse>> GetFunctionsMetadata(HttpRequest request, bool includeProxies)
-        {
-            var baseUrl = $"{request.Scheme}://{request.Host}";
-            return await GetFunctionsMetadata(baseUrl, includeProxies);
-        }
-
-        public async Task<IEnumerable<FunctionMetadataResponse>> GetFunctionsMetadata(string baseUrl, bool includeProxies)
+        public async Task<IEnumerable<FunctionMetadataResponse>> GetFunctionsMetadata(bool includeProxies)
         {
             var hostOptions = _applicationHostOptions.CurrentValue.ToHostOptions();
+            var functionsMetadata = GetFunctionsMetadata(hostOptions, _workerConfigs, _logger, includeProxies);
 
+            return await GetFunctionMetadataResponse(functionsMetadata, hostOptions);
+        }
+
+        internal static async Task<IEnumerable<FunctionMetadataResponse>> GetFunctionMetadataResponse(IEnumerable<FunctionMetadata> functionsMetadata, ScriptJobHostOptions hostOptions)
+        {
+            string baseUrl = GetBaseUrl();
             string routePrefix = await GetRoutePrefix(hostOptions.RootScriptPath);
-            var tasks = GetFunctionsMetadata(includeProxies).Select(p => p.ToFunctionMetadataResponse(hostOptions, routePrefix, baseUrl));
-            return await tasks.WhenAll();
-        }
+            var tasks = functionsMetadata.Select(p => p.ToFunctionMetadataResponse(hostOptions, routePrefix, baseUrl));
 
-        internal IEnumerable<FunctionMetadata> GetFunctionsMetadata(bool includeProxies = false)
-        {
-            var hostOptions = _applicationHostOptions.CurrentValue.ToHostOptions();
-            return GetFunctionsMetadata(hostOptions, _workerConfigs, _logger, includeProxies);
+            return await tasks.WhenAll();
         }
 
         internal static IEnumerable<FunctionMetadata> GetFunctionsMetadata(ScriptJobHostOptions hostOptions, IEnumerable<WorkerConfig> workerConfigs, ILogger logger, bool includeProxies = false)
@@ -252,6 +242,12 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Management
             }
 
             return routePrefix;
+        }
+
+        internal static string GetBaseUrl()
+        {
+            string hostName = Environment.GetEnvironmentVariable("WEBSITE_HOSTNAME") ?? "localhost";
+            return $"https://{hostName}";
         }
     }
 }

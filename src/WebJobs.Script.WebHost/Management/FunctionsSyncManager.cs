@@ -181,15 +181,66 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Management
             return _hashBlob;
         }
 
-        public async Task<JArray> GetSyncTriggersPayload()
+        public async Task<JObject> GetSyncTriggersPayload()
         {
             var hostOptions = _applicationHostOptions.CurrentValue.ToHostOptions();
             var functionsMetadata = WebFunctionsManager.GetFunctionsMetadata(hostOptions, _workerConfigs, _logger, includeProxies: true);
+            var secretsStorageType = Environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebJobsSecretStorageType);
+
+            // add app level info
+            JObject result = new JObject();
+            var appInfo = new JObject();
+            appInfo.Add("runtimeVersion", ScriptHost.Version);
+            appInfo.Add("secretsStorageType", secretsStorageType);
+            result.Add("appInfo", appInfo);
 
             // Add trigger information used by the ScaleController
-            JObject result = new JObject();
             var triggers = await GetFunctionTriggers(functionsMetadata, hostOptions);
-            return new JArray(triggers);
+            result.Add("triggers", new JArray(triggers));
+
+            // Add functions details to the payload
+            JObject functions = new JObject();
+            string routePrefix = await WebFunctionsManager.GetRoutePrefix(hostOptions.RootScriptPath);
+            var functionDetails = await WebFunctionsManager.GetFunctionMetadataResponse(functionsMetadata, hostOptions);
+            result.Add("functions", new JArray(functionDetails.Select(p => JObject.FromObject(p))));
+
+            // Add functions secrets to the payload
+            // Only secret types we own/control can we cache directly
+            // Encryption is handled by Antares before storage
+            if (string.IsNullOrEmpty(secretsStorageType) ||
+                string.Compare(secretsStorageType, "files", StringComparison.OrdinalIgnoreCase) == 0 ||
+                string.Compare(secretsStorageType, "blob", StringComparison.OrdinalIgnoreCase) == 0)
+            {
+                JObject secrets = new JObject();
+                var hostSecretsInfo = await _secretManagerProvider.Current.GetHostSecretsAsync();
+                var hostSecrets = new JObject();
+                hostSecrets.Add("master", hostSecretsInfo.MasterKey);
+                hostSecrets.Add("function", JObject.FromObject(hostSecretsInfo.FunctionKeys));
+                hostSecrets.Add("system", JObject.FromObject(hostSecretsInfo.SystemKeys));
+                secrets.Add("host", hostSecrets);
+                result.Add("secrets", secrets);
+
+                var functionSecrets = new JArray();
+                var httpFunctions = functionsMetadata.Where(p => !p.IsProxy && p.InputBindings.Any(q => q.IsTrigger && string.Compare(q.Type, "httptrigger", StringComparison.OrdinalIgnoreCase) == 0)).Select(p => p.Name);
+                foreach (var functionName in httpFunctions)
+                {
+                    var currSecrets = await _secretManagerProvider.Current.GetFunctionSecretsAsync(functionName);
+                    var currElement = new JObject()
+                {
+                    { "name", functionName },
+                    { "secrets", JObject.FromObject(currSecrets) }
+                };
+                    functionSecrets.Add(currElement);
+                }
+                secrets.Add("function", functionSecrets);
+            }
+            else
+            {
+                // TODO: handle other external key storage types
+                // like KeyVault when the feature comes online
+            }
+
+            return result;
         }
 
         internal async Task<IEnumerable<JObject>> GetFunctionTriggers(IEnumerable<FunctionMetadata> functionsMetadata, ScriptJobHostOptions hostOptions)
@@ -295,7 +346,11 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Management
         {
             var token = SimpleWebTokenHelper.CreateToken(DateTime.UtcNow.AddMinutes(5));
 
-            _logger.LogDebug($"SyncTriggers content: {content}");
+            // sanitize the content before logging
+            var sanitizedContent = JObject.Parse(content);
+            sanitizedContent.Remove("secrets");
+            string sanitizedContentString = sanitizedContent.ToString();
+            _logger.LogDebug($"SyncTriggers content: {sanitizedContentString}");
 
             using (var request = BuildSetTriggersRequest())
             {

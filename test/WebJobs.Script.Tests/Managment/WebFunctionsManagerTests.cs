@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Azure.WebJobs.Host.Executors;
 using Microsoft.Azure.WebJobs.Script.Description;
+using Microsoft.Azure.WebJobs.Script.Management.Models;
 using Microsoft.Azure.WebJobs.Script.Rpc;
 using Microsoft.Azure.WebJobs.Script.WebHost;
 using Microsoft.Azure.WebJobs.Script.WebHost.Management;
@@ -45,7 +46,7 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.Managment
         }
 
         [Fact]
-        public void ReadFunctionsMetadataSucceeds()
+        public async Task ReadFunctionsMetadataSucceeds()
         {
             string functionsPath = Path.Combine(Environment.CurrentDirectory, @"..\..\..\..\..\sample");
             // Setup
@@ -71,7 +72,7 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.Managment
             var webManager = new WebFunctionsManager(optionsMonitor, new OptionsWrapper<LanguageWorkerOptions>(CreateLanguageWorkerConfigSettings()), loggerFactory, httpClient, secretManagerProviderMock.Object, functionsSyncManager);
 
             FileUtility.Instance = fileSystem;
-            IEnumerable<FunctionMetadata> metadata = webManager.GetFunctionsMetadata();
+            IEnumerable<FunctionMetadataResponse> metadata = await webManager.GetFunctionsMetadata(includeProxies: false);
             var jsFunctions = metadata.Where(funcMetadata => funcMetadata.Language == LanguageWorkerConstants.NodeLanguageWorkerName).ToList();
             var unknownFunctions = metadata.Where(funcMetadata => string.IsNullOrEmpty(funcMetadata.Language)).ToList();
 
@@ -96,6 +97,21 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.Managment
 
             string prefix = await WebFunctionsManager.GetRoutePrefix(_testRootScriptPath);
             Assert.Equal(expected, prefix);
+        }
+
+        [Fact]
+        public void GetBaseUrl_ReturnsExpectedValue()
+        {
+            Assert.Equal("https://localhost", WebFunctionsManager.GetBaseUrl());
+
+            var vars = new Dictionary<string, string>
+            {
+                { "WEBSITE_HOSTNAME", "testhost.foo.com" }
+            };
+            using (var env = new TestScopedEnvironmentVariable(vars))
+            {
+                Assert.Equal("https://testhost.foo.com", WebFunctionsManager.GetBaseUrl());
+            }
         }
 
         private static HttpClient CreateHttpClient(StringBuilder writeContent)

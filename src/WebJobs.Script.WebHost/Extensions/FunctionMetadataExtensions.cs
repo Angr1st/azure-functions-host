@@ -51,7 +51,11 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Extensions
             {
                 var testDataFilePath = functionMetadata.GetTestDataFilePath(hostOptions);
                 response.TestDataHref = VirtualFileSystem.FilePathToVfsUri(testDataFilePath, baseUrl, hostOptions);
-                response.TestData = await GetTestData(testDataFilePath, hostOptions);
+
+                // why are we reading this and returning it? we should just be returning
+                // the href like all the other file paths
+                // also, we can't cache this in the functions digest either
+                //response.TestData = await GetTestData(testDataFilePath, hostOptions);
             }
 
             if (!string.IsNullOrEmpty(functionMetadata.ScriptFile))
